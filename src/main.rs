@@ -3,14 +3,14 @@
 //! Benchmarking philosophy: process startup (exec, dynamic linker, libc init,
 //! stdout setup) takes microseconds and would completely swamp the actual
 //! "counting" operation. So we measure *only* the counting itself, using the
-//! CPU's own cycle counter (RDTSC) for true nanosecond-level resolution —
+//! CPU's own cycle counter (RDTSC) for true nanosecond-level resolution,
 //! nothing in the standard timing API (Instant::now()) is precise enough to
 //! resolve a tight loop of `add` instructions.
 //!
 //! Shenanigans borrowed from fasthex (github.com/CallMeAlphabet/fasthex),
 //! adapted from formatting hex bytes to incrementing integers:
 //!   - a persistent worker-thread pool (hand-rolled with std::thread + mpsc,
-//!     no external crate — statically partitions the target range across
+//!     no external crate, statically partitions the target range across
 //!     workers once at startup, then reuses the same threads for every
 //!     trial instead of spawning fresh ones each time)
 //!   - runtime CPU feature detection with a tiered SIMD fallback:
@@ -20,7 +20,7 @@
 //!     instead of formatting bytes.
 //!   - a dedicated writer thread that drains a channel of finished trials
 //!     while the main thread keeps counting, then performs one batched
-//!     write() syscall instead of one per line — fasthex's double-buffered
+//!     write() syscall instead of one per line like fasthex's double-buffered
 //!     I/O pattern, adapted from hex chunks to benchmark samples.
 
 use std::hint::black_box;
@@ -44,7 +44,6 @@ fn cycles() -> u64 {
     val
 }
 
-/// Roughly calibrate cycles-per-nanosecond by timing a sleep of known duration.
 fn cycles_per_ns() -> f64 {
     let dur = std::time::Duration::from_millis(50);
     let start_c = cycles();
@@ -55,11 +54,6 @@ fn cycles_per_ns() -> f64 {
     elapsed_c / elapsed_ns
 }
 
-// ---------------------------------------------------------------------
-// Counting engine: SIMD-tiered scalar core + persistent worker-pool chunking
-// ---------------------------------------------------------------------
-
-/// Scalar fallback: count `end - start` elements one at a time.
 #[inline(never)]
 fn count_range_scalar(start: u64, end: u64) -> u64 {
     let mut n: u64 = black_box(start);
@@ -71,9 +65,6 @@ fn count_range_scalar(start: u64, end: u64) -> u64 {
     counted
 }
 
-/// AVX2 path: 4x u64 (32 bytes) per vector add, same chunk width fasthex
-/// uses for its AVX2 hex-formatting path — just repurposed to accumulate
-/// four lanes of "how many elements have we counted" in parallel.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn count_range_avx2(start: u64, end: u64) -> u64 {
@@ -92,15 +83,12 @@ unsafe fn count_range_avx2(start: u64, end: u64) -> u64 {
     _mm256_storeu_si256(lanes_out.as_mut_ptr() as *mut __m256i, acc);
     let mut counted: u64 = (lanes_out[0] + lanes_out[1] + lanes_out[2] + lanes_out[3]) as u64;
 
-    // Remainder that didn't fill a full vector.
     for _ in 0..(len - full_iters * LANES) {
         counted = black_box(counted + 1);
     }
     counted
 }
 
-/// SSE path: 2x u64 (16 bytes) per vector add. Gated on sse4.1 to mirror
-/// fasthex's tier naming, though sse2 alone would technically suffice here.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
 unsafe fn count_range_sse41(start: u64, end: u64) -> u64 {
@@ -125,9 +113,6 @@ unsafe fn count_range_sse41(start: u64, end: u64) -> u64 {
     counted
 }
 
-/// Runtime-dispatched: AVX2 -> SSE4.1 -> scalar, checked once per call.
-/// fasthex does the same feature probe per formatting call; here it's
-/// per range-chunk, which is the unit of work each pool worker gets handed.
 #[inline]
 fn count_range(start: u64, end: u64) -> u64 {
     if start >= end {
@@ -145,13 +130,6 @@ fn count_range(start: u64, end: u64) -> u64 {
     count_range_scalar(start, end)
 }
 
-/// A persistent pool of worker threads, each blocked on its own job channel.
-/// Unlike spawning fresh OS threads per call (which would let thread-creation
-/// overhead swamp a nanosecond-scale measurement), workers are created once
-/// at startup and reused for every warm-up iteration and every trial —
-/// mirroring the "long-lived pool, short-lived tasks" shape of fasthex's
-/// mirroring fasthex's persistent thread-pool architecture, just implemented
-/// by hand with std::thread + mpsc instead of pulling in the rayon crate.
 struct Job {
     start: u64,
     end: u64,
@@ -181,8 +159,6 @@ impl WorkerPool {
         WorkerPool { senders, _handles: handles }
     }
 
-    /// Statically partition `0..target` into up to `num_threads()` chunks,
-    /// hand one chunk to each worker, and sum the results as they arrive.
     fn count_to(&self, target: u64) -> u64 {
         if target == 0 {
             return 0;
@@ -215,12 +191,6 @@ impl WorkerPool {
     }
 }
 
-/// Dispatch target: with 1 thread requested, skip the pool (and its
-/// mpsc round-trip) entirely and call the SIMD-tiered counter directly —
-/// otherwise every single-threaded run would pay real channel overhead
-/// for no parallelism benefit. With >1 threads, go through the pool.
-/// This makes `-t 1` a genuine "no threading tax" baseline you can
-/// compare against `-t N` to see exactly where the crossover point is.
 enum Counter {
     Direct,
     Pooled(WorkerPool),
@@ -243,7 +213,6 @@ impl Counter {
     }
 }
 
-/// One timed trial: returns (result, cycles_taken).
 #[inline(never)]
 fn time_one_trial(target: u64, counter: &Counter) -> (u64, u64) {
     let c0 = cycles();
@@ -251,10 +220,6 @@ fn time_one_trial(target: u64, counter: &Counter) -> (u64, u64) {
     let c1 = cycles();
     (result, c1 - c0)
 }
-
-// ---------------------------------------------------------------------
-// Help / usage rendering — styled to match fasthex's --help output
-// ---------------------------------------------------------------------
 
 const BOLD_GREEN: &str = "\x1b[1;32m";
 const BOLD_CYAN: &str = "\x1b[1;36m";
@@ -424,10 +389,6 @@ pub fn print_help_body(on: bool) {
     print!("{out}");
 }
 
-// ---------------------------------------------------------------------
-// Argument parsing — mirrors fasthex's --long / -short / --key=value style
-// ---------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq)]
 enum Unit {
     Ns,
@@ -528,9 +489,6 @@ fn parse_positive_int(flag: &str, v: &str) -> Result<u64, String> {
     Ok(n as u64)
 }
 
-/// For a short flag like `-c` that takes a value: if characters remain in
-/// this arg after the flag (e.g. `-c5`), use them as the value and consume
-/// the rest of the arg; otherwise take the next argv entirely (e.g. `-c 5`).
 fn take_inline_value(
     arg: &str,
     bytes: &[u8],
@@ -659,10 +617,6 @@ fn parse_args() -> Result<Options, String> {
     parse_args_from(&raw)
 }
 
-// ---------------------------------------------------------------------
-// Stats
-// ---------------------------------------------------------------------
-
 fn median(sorted: &[f64]) -> f64 {
     let n = sorted.len();
     if n % 2 == 1 {
@@ -675,14 +629,6 @@ fn median(sorted: &[f64]) -> f64 {
 fn json_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
-
-// ---------------------------------------------------------------------
-// Output: a dedicated writer thread drains a channel of finished trial
-// lines while the main thread keeps counting — fasthex's double-buffered
-// I/O pattern, adapted from hex chunks to benchmark samples. Everything
-// is batched into one buffer and flushed with a single write() syscall
-// instead of one per println!, avoiding repeated stdout-lock overhead.
-// ---------------------------------------------------------------------
 
 fn spawn_writer() -> (mpsc::Sender<String>, std::thread::JoinHandle<String>) {
     let (tx, rx) = mpsc::channel::<String>();
@@ -718,12 +664,6 @@ fn main() {
 
     let pool = Counter::new(opts.threads);
 
-    // Warm-up: fixed small workload run 1000 times, regardless of the
-    // user's actual --count-to. Scaling the warm-up with a huge target
-    // would make counting to a billion take a very long time before the
-    // "real" measurement even starts — so we prime caches, the worker
-    // pool's threads, and branch predictors with something small and
-    // representative instead.
     let warmup_target = opts.count_to.min(4096).max(1);
     for _ in 0..1000 {
         black_box(pool.count_to(warmup_target));
@@ -759,8 +699,6 @@ fn main() {
         return;
     }
 
-    // --- Repeat mode: dedicated writer thread drains trials as a
-    // background consumer while the main thread keeps producing them.
     let (tx, writer) = spawn_writer();
     let mut samples: Vec<f64> = Vec::with_capacity(opts.repeat as usize);
     let mut last_result = 0u64;
