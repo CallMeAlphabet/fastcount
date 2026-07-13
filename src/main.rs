@@ -316,7 +316,7 @@ fn output_rows() -> Vec<Row> {
     vec![
         row("-q", "--quiet", "print only the raw number(s), script-friendly"),
         row("-j", "--json", "machine-readable JSON output"),
-        row_val("-u", "--unit", "<UNIT>", "ns | us | ms | cycles  (default: ns)"),
+        row_val("-u", "--unit", "<UNIT>", "ns | µs | ms | cycles  (default: ns)"),
         row_val("-L", "--color", "<WHEN>", "auto | always | never  (default: auto)"),
     ]
 }
