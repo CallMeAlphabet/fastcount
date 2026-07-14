@@ -23,6 +23,7 @@
 //!     write() syscall instead of one per line like fasthex's double-buffered
 //!     I/O pattern, adapted from hex chunks to benchmark samples.
 
+use clihelp::{HelpPage, Row, Section};
 use std::hint::black_box;
 use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc;
@@ -221,63 +222,8 @@ fn time_one_trial(target: u64, counter: &Counter) -> (u64, u64) {
     (result, c1 - c0)
 }
 
-const BOLD_GREEN: &str = "\x1b[1;32m";
-const BOLD_CYAN: &str = "\x1b[1;36m";
-const CYAN: &str = "\x1b[36m";
-const RESET: &str = "\x1b[0m";
-
-const DESC_COLUMN: usize = 28;
-
-fn paint(color: &str, s: &str, on: bool) -> String {
-    if on {
-        format!("{color}{s}{RESET}")
-    } else {
-        s.to_string()
-    }
-}
-
-struct Row {
-    short: &'static str,
-    long: &'static str,
-    placeholder: Option<&'static str>,
-    desc: &'static str,
-}
-
-impl Row {
-    fn plain_flags(&self) -> String {
-        let base = if self.short.is_empty() {
-            format!("    {}", self.long)
-        } else {
-            format!("{}, {}", self.short, self.long)
-        };
-        match self.placeholder {
-            Some(ph) => format!("{base} {ph}"),
-            None => base,
-        }
-    }
-
-    fn styled_flags(&self, on: bool) -> String {
-        let lit = |s: &str| paint(BOLD_CYAN, s, on);
-        let base = if self.short.is_empty() {
-            format!("    {}", lit(self.long))
-        } else {
-            format!("{}, {}", lit(self.short), lit(self.long))
-        };
-        match self.placeholder {
-            Some(ph) => format!("{base} {}", paint(CYAN, ph, on)),
-            None => base,
-        }
-    }
-
-    fn render(&self, on: bool) -> String {
-        let plain_len = self.plain_flags().len();
-        let pad = DESC_COLUMN.saturating_sub(plain_len);
-        format!("  {}{}{}", self.styled_flags(on), " ".repeat(pad), self.desc)
-    }
-}
-
 fn row(short: &'static str, long: &'static str, desc: &'static str) -> Row {
-    Row { short, long, placeholder: None, desc }
+    Row::new(short, long, desc)
 }
 fn row_val(
     short: &'static str,
@@ -285,13 +231,7 @@ fn row_val(
     placeholder: &'static str,
     desc: &'static str,
 ) -> Row {
-    Row { short, long, placeholder: Some(placeholder), desc }
-}
-
-struct Section {
-    title: &'static str,
-    note: Option<&'static str>,
-    rows: Vec<Row>,
+    Row::with_value(short, long, placeholder, desc)
 }
 
 fn counting_rows() -> Vec<Row> {
@@ -355,38 +295,22 @@ fn print_help() {
 }
 
 pub fn print_help_body(on: bool) {
-    let header = |s: &str| paint(BOLD_GREEN, s, on);
-
-    let mut out = String::new();
-
-    out.push_str(&format!(
-        "fastcount {VERSION} - an incredibly fast, incredibly useless counter\n\n"
-    ));
-
-    out.push_str(&format!("{}\n", header("Usage:")));
-    out.push_str("  fastcount [options]\n\n");
-
-    out.push_str(
+    let mut page = HelpPage::new(format!(
+        "fastcount {VERSION} - an incredibly fast, incredibly useless counter"
+    ))
+    .usage("fastcount [options]")
+    .blurb(
         "Counts from 0 up to a target number as fast as physically possible,\n\
          in parallel, with SIMD, then stops, having accomplished nothing of\n\
-         consequence considerably faster than it needed to.\n\n",
-    );
+         consequence considerably faster than it needed to.",
+    )
+    .footer("EXIT CODES: 0 = counted successfully  2 = invalid option value");
 
     for section in sections() {
-        out.push_str(&format!("{}\n", header(section.title)));
-        if let Some(note) = section.note {
-            out.push_str(&format!("  {note}\n\n"));
-        }
-        for r in &section.rows {
-            out.push_str(&r.render(on));
-            out.push('\n');
-        }
-        out.push('\n');
+        page = page.section(section);
     }
 
-    out.push_str("EXIT CODES: 0 = counted successfully  2 = invalid option value\n");
-
-    print!("{out}");
+    print!("{}", page.render(on));
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -682,7 +606,7 @@ fn main() {
         } else if opts.quiet {
             format!("{result} {val:.4}{unit}")
         } else {
-            let num = |s: String| paint(BOLD_CYAN, &s, do_color);
+            let num = |s: String| clihelp::paint(clihelp::Theme::default().flag, &s, do_color);
             format!(
                 "Counted to {} using {} thread{}.\nTime elapsed: {} cycles (~{} {unit})\nCalibrated clock: ~{ghz:.3} GHz\nEfficiency rating: {} integer{} / {val:.4} {unit} = blazingly fast",
                 num(result.to_string()),
@@ -750,7 +674,7 @@ fn main() {
     } else if opts.quiet {
         out.push_str(&format!("{min:.4} {mean:.4} {med:.4} {max:.4}\n"));
     } else {
-        let num = |s: String| paint(BOLD_CYAN, &s, do_color);
+        let num = |s: String| clihelp::paint(clihelp::Theme::default().flag, &s, do_color);
         out.push_str(&format!(
             "Counted to {} across {} trials using {} thread{}.\n",
             num(last_result.to_string()),
