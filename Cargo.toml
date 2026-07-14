@@ -3,6 +3,9 @@ name = "fastcount"
 version = "2.0.0"
 edition = "2021"
 
+[dependencies]
+clihelp = "0.1"
+
 [[bin]]
 name = "fastcount"
 path = "src/main.rs"
