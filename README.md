@@ -13,15 +13,17 @@ fastcount — an incredibly fast, incredibly useless counter written in Rust, wi
 - [How It Works](#how-it-works)
 - [Testing Conditions](#testing-conditions)
 
+
 ## Quick Start
-
-*this is my try with a more sarcastic README, because I wanted to have some fun and this project is kinda useless*
-
+- **On Arch**
 ```bash
-# Install
-cargo install --git https://github.com/CallMeAlphabet/fastcount
+paru -S fastcount 
+# or fastcount-bin for a prebuilt release
 ```
-
+- **Non-arch**
+```bash
+cargo install fastcount
+```
 > **Note**: Make sure `~/.cargo/bin` is in your `PATH`. It's added automatically by rustup, but if `fastcount` isn't found, add this to your shell config file:
 > ```bash
 > # If you use Bash:
