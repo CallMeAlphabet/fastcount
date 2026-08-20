@@ -82,7 +82,7 @@ fn count_range_scalar(start: u64, end: u64) -> u64 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn count_range_avx2(start: u64, end: u64) -> u64 {
+unsafe fn count_range_avx2(start: u64, end: u64) -> u64 { unsafe {
     use std::arch::x86_64::*;
     let len = end - start;
     const LANES: u64 = 4;
@@ -102,11 +102,11 @@ unsafe fn count_range_avx2(start: u64, end: u64) -> u64 {
         counted = black_box(counted + 1);
     }
     counted
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
-unsafe fn count_range_sse41(start: u64, end: u64) -> u64 {
+unsafe fn count_range_sse41(start: u64, end: u64) -> u64 { unsafe {
     use std::arch::x86_64::*;
     let len = end - start;
     const LANES: u64 = 2;
@@ -126,7 +126,7 @@ unsafe fn count_range_sse41(start: u64, end: u64) -> u64 {
         counted = black_box(counted + 1);
     }
     counted
-}
+}}
 
 #[inline]
 fn count_range(start: u64, end: u64) -> u64 {

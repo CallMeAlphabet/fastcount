@@ -4,7 +4,7 @@ version = "2.0.0"
 description = "an incredibly fast, incredibly useless counter"
 license = "Apache-2.0"
 repository = "https://github.com/CallMeAlphabet/fastcount"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 clihelp = "0.1"
