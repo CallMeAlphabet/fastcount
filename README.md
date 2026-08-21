@@ -1,6 +1,6 @@
 # fastcount
 
-fastcount — an incredibly fast, incredibly useless counter written in Rust, with all the features that other counters that count to one don't have.
+fastcount — an incredibly fast, incredibly useless counter written in Rust, with all the features that other counters don't have. It also attaches "blazingly fast" to all outputs for good measure and ignores startup time.
 
 ## Table of Contents
 
