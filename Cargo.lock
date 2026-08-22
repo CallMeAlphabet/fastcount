@@ -10,7 +10,7 @@ checksum = "54cb2e1e125b2e405ab88ff3633f5306f02d5226cab6b4cb2b451569742e8a2d"
 
 [[package]]
 name = "fastcount"
-version = "2.0.0"
+version = "0.2.1"
 dependencies = [
  "clihelp",
 ]

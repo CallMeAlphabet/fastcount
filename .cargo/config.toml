@@ -1,0 +1,9 @@
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "force-unwind-tables=no",
+    "-Z", "location-detail=none",
+]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+build-std-features = []
