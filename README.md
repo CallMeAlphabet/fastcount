@@ -47,7 +47,7 @@ fastcount
 
 | Tool | Time | Speed vs fastcount |
 |------|------|------------------|
-| **fastcount** | **0.78s** | **1x (baseline)** |
+| **fastcount** | **2.16s** | **1x (baseline)** |
 | Python | 43.62s | 285.2x slower |
 | Bash ¹ | 5.8h | 9,624x slower |
 
