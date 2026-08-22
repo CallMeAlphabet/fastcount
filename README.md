@@ -43,6 +43,17 @@ fastcount
 
 ## Benchmarks
 
+### Real Benchmark:
+
+| Tool | Time | Speed vs fastcount |
+|------|------|------------------|
+| **fastcount** | **0.78s** | **1x (baseline)** |
+| Python | 43.62s | 285.2x slower |
+| Bash ¹ | 5.8h | 9,624x slower |
+
+**¹ Bash counted to 10 million, the time was just multiplied by 1000**
+
+
 ### Benchmark 1: counting to one, threading tax edition
 
 This is the benchmark that justifies this whole README section existing.
