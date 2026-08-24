@@ -15,12 +15,7 @@ fastcount — an incredibly fast, incredibly useless counter written in Rust, wi
 
 
 ## Quick Start
-- **On Arch**
-```bash
-paru -S fastcount 
-# or fastcount-bin for a prebuilt release
-```
-- **Non-arch**
+- **Any distro**
 ```bash
 cargo install fastcount
 ```
@@ -35,6 +30,8 @@ cargo install fastcount
 > # If you use Zsh:
 > export PATH="$PATH:$HOME/.cargo/bin"
 > ```
+>
+> Also, there previously was an AUR package, but it was taken down, because fastcount was too useless. Goal achieved?
 
 ```bash
 # Use it!
