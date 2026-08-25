@@ -15,6 +15,10 @@ fastcount — an incredibly fast, incredibly useless counter written in Rust, wi
 
 
 ## Quick Start
+- **Via Nix**
+```
+nix profile add github:CallMeAlphabet/fastcount
+```
 - **Any distro**
 ```bash
 cargo install fastcount
