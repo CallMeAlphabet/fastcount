@@ -14,7 +14,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-//! fastcount 2.0.0 - an incredibly fast, incredibly useless counter
+//! fastcount - an incredibly fast, incredibly useless counter
 //!
 //! Benchmarking philosophy: process startup (exec, dynamic linker, libc init,
 //! stdout setup) takes microseconds and would completely swamp the actual
@@ -45,8 +45,6 @@ use std::io::{self, IsTerminal, Write};
 use std::simd::Simd;
 use std::sync::mpsc;
 use std::thread;
-
-const VERSION: &str = "2.0.0";
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
@@ -313,7 +311,10 @@ fn print_help() {
 
 pub fn print_help_body(on: bool) {
     let mut page = HelpPage::new(format!(
-        "fastcount {VERSION} - an incredibly fast, incredibly useless counter"
+        "{} {} - {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_PKG_DESCRIPTION")
     ))
     .usage("fastcount [options]")
     .blurb(
@@ -477,7 +478,7 @@ fn parse_args_from(raw: &[String]) -> Result<Options, String> {
                     std::process::exit(0);
                 }
                 "version" => {
-                    println!("{VERSION}");
+                    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
                     std::process::exit(0);
                 }
                 "count-to" => {
@@ -514,7 +515,7 @@ fn parse_args_from(raw: &[String]) -> Result<Options, String> {
                         std::process::exit(0);
                     }
                     b'v' => {
-                        println!("{VERSION}");
+                        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
                         std::process::exit(0);
                     }
                     b'c' => {

@@ -22,11 +22,13 @@
           cargo = rustToolchain;
           rustc = rustToolchain;
         };
+
+        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       in
       {
         packages.default = rustPlatform.buildRustPackage {
           pname = "fastcount";
-          version = "2.1.0";
+          version = cargoToml.package.version;
 
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
