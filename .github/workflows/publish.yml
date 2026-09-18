@@ -20,22 +20,51 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
-          components: rust-src
+        uses: dtolnay/rust-toolchain@stable
 
+      # This job used to install nightly with rust-src, because the packaged
+      # crate needed `-Z build-std` to verify. It no longer does: the only
+      # nightly-only things were `cargo-features = ["panic-immediate-abort"]`
+      # and a dead `#![feature(portable_simd)]`, both removed, and build-std now
+      # lives in release.yml. Publishing on stable is also the honest test, since
+      # stable is what `cargo install fastcount` gets without a rustup override.
       - name: Set auto-incrementing patch version
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: |
           BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2 | cut -d. -f1,2)
           NEW_VERSION="$BASE_VERSION.$GITHUB_RUN_NUMBER"
           sed -i "0,/^version = \".*\"/s//version = \"$NEW_VERSION\"/" Cargo.toml
           echo "Publishing version: $NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
 
+      # Verify the packaged crate instead of skipping it with --no-verify (which
+      # only existed because build-std could not be verified on this channel):
+      # every fastcount version from 0.2.9 to 0.2.12 shipped a manifest stable
+      # cannot even parse, and stayed installable for anyone whose index cache
+      # resolved to them. A publish that cannot be verified must not leave here.
       - name: Publish to crates.io
-        run: cargo publish --allow-dirty --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo publish --allow-dirty
+
+      # The publish above builds the *repo* copy. Re-install from the registry
+      # and run it, so the artifact users actually get is the thing being tested.
+      # A private CARGO_HOME keeps a warm index cache from resolving an older
+      # version - the exact failure mode that left broken releases installable.
+      - name: Smoke-test the published crate on stable
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          CRATE: fastcount
+        run: |
+          export CARGO_HOME="$RUNNER_TEMP/smoke-home"
+          cargo install --force --locked --debug "$CRATE@$NEW_VERSION" \
+            --root "$RUNNER_TEMP/smoke-root"
+          BIN="$RUNNER_TEMP/smoke-root/bin/$CRATE"
+          "$BIN" --version
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          test "$("$BIN" -c 1000000 -t 2 -q | cut -d' ' -f1)" = 1000000
