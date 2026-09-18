@@ -1,5 +1,3 @@
-#![feature(portable_simd)]
-
 //! Copyright 2026 CallMeAlphabet (ItzAlphabet)
 //!
 //! Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +40,6 @@
 use clihelp::{HelpPage, Row, Section};
 use std::hint::black_box;
 use std::io::{self, IsTerminal, Write};
-use std::simd::Simd;
 use std::sync::mpsc;
 use std::thread;
 

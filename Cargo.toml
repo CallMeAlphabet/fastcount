@@ -1,8 +1,6 @@
-cargo-features = ["panic-immediate-abort"]
-
 [package]
 name = "fastcount"
-version = "0.2.1"
+version = "0.2.2"
 description = "an incredibly fast, incredibly useless counter"
 license = "Apache-2.0"
 repository = "https://github.com/CallMeAlphabet/fastcount"
@@ -19,6 +17,6 @@ path = "src/main.rs"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "immediate-abort"
+panic = "abort"
 strip = true
 split-debuginfo = "off"

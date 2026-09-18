@@ -30,18 +30,9 @@
           pname = "fastcount";
           version = cargoToml.package.version;
 
-          src = pkgs.lib.cleanSourceWith {
-            src = ./.;
-            filter = path: type:
-              (baseNameOf path != ".cargo") && (pkgs.lib.cleanSourceFilter path type);
-          };
+          src = pkgs.lib.cleanSource ./;
 
           cargoLock.lockFile = ./Cargo.lock;
-
-          postPatch = ''
-            sed -i '/panic-immediate-abort/d' Cargo.toml
-            sed -i 's/immediate-abort/abort/g' Cargo.toml
-          '';
 
           meta = with pkgs.lib; {
             description = "An incredibly fast, incredibly useless counter";

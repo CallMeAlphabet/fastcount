@@ -1,9 +1,8 @@
+# Only flags every toolchain accepts. A `-Z` here reaches rustc on every
+# channel and a stable rustc refuses it outright, and an `[unstable]` table here
+# once carried `build-std-features = []`, which split the standard library build
+# across two different `core` copies so every build of this crate died with
+# `error[E0152]: duplicate lang item in crate core: sized`.
+# The nightly-only std-rebuilding size tweak now lives in .github/workflows.
 [target.x86_64-unknown-linux-gnu]
-rustflags = [
-    "-C", "force-unwind-tables=no",
-    "-Z", "location-detail=none",
-]
-
-[unstable]
-build-std = ["std", "panic_abort"]
-build-std-features = []
+rustflags = ["-C", "force-unwind-tables=no"]
