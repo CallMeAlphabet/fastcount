@@ -1,46 +1,9 @@
-//! Copyright 2026 CallMeAlphabet (ItzAlphabet)
-//!
-//! Licensed under the Apache License, Version 2.0 (the "License");
-//! you may not use this file except in compliance with the License.
-//! You may obtain a copy of the License at
-//!
-//!    http://www.apache.org/licenses/LICENSE-2.0
-//!
-//! Unless required by applicable law or agreed to in writing, software
-//! distributed under the License is distributed on an "AS IS" BASIS,
-//! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//! See the License for the specific language governing permissions and
-//! limitations under the License.
-
-//! fastcount - an incredibly fast, incredibly useless counter
-//!
-//! Benchmarking philosophy: process startup (exec, dynamic linker, libc init,
-//! stdout setup) takes microseconds and would completely swamp the actual
-//! "counting" operation. So we measure *only* the counting itself, using the
-//! CPU's own cycle counter (RDTSC) for true nanosecond-level resolution,
-//! nothing in the standard timing API (Instant::now()) is precise enough to
-//! resolve a tight loop of `add` instructions.
-//!
-//! Shenanigans borrowed from fasthex (github.com/CallMeAlphabet/fasthex),
-//! adapted from formatting hex bytes to incrementing integers:
-//!   - a persistent worker-thread pool (hand-rolled with std::thread + mpsc,
-//!     no external crate, statically partitions the target range across
-//!     workers once at startup, then reuses the same threads for every
-//!     trial instead of spawning fresh ones each time)
-//!   - runtime CPU feature detection with a tiered SIMD fallback:
-//!     AVX2 (4x u64 / 32 bytes per vector op) -> SSE4.1 (2x u64 / 16 bytes)
-//!     -> scalar, exactly mirroring fasthex's AVX2 -> SSE4.1/SSSE3 -> scalar
-//!     hex-formatting fallback chain, just applied to incrementing integers
-//!     instead of formatting bytes.
-//!   - a dedicated writer thread that drains a channel of finished trials
-//!     while the main thread keeps counting, then performs one batched
-//!     write() syscall instead of one per line like fasthex's double-buffered
-//!     I/O pattern, adapted from hex chunks to benchmark samples.
-
 use clihelp::{HelpPage, Row, Section};
 use std::hint::black_box;
-use std::io::{self, IsTerminal, Write};
-use std::sync::mpsc;
+use std::fmt::Write as FmtWrite;
+use std::io::{self, IsTerminal, Write as IoWrite};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 #[cfg(target_arch = "x86_64")]
@@ -58,155 +21,149 @@ fn cycles() -> u64 {
 }
 
 fn cycles_per_ns() -> f64 {
-    let dur = std::time::Duration::from_millis(50);
-    let start_c = cycles();
+    let dur = std::time::Duration::from_micros(50);
     let start_t = std::time::Instant::now();
-    std::thread::sleep(dur);
-    let elapsed_ns = start_t.elapsed().as_nanos() as f64;
+    let start_c = cycles();
+    while start_t.elapsed() < dur {
+        std::hint::spin_loop();
+    }
     let elapsed_c = (cycles() - start_c) as f64;
+    let elapsed_ns = start_t.elapsed().as_nanos() as f64;
     elapsed_c / elapsed_ns
 }
 
-#[inline(never)]
-fn count_range_scalar(start: u64, end: u64) -> u64 {
-    let mut n: u64 = black_box(start);
-    let mut counted: u64 = 0;
-    while n < end {
-        n = black_box(n + 1);
-        counted = black_box(counted + 1);
-    }
-    counted
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn count_range_avx2(start: u64, end: u64) -> u64 { unsafe {
-    use std::arch::x86_64::*;
-    let len = end - start;
-    const LANES: u64 = 4;
-    let full_iters = len / LANES;
-
-    let mut acc = _mm256_setzero_si256();
-    let ones = _mm256_set1_epi64x(1);
-    for _ in 0..full_iters {
-        acc = black_box(_mm256_add_epi64(acc, ones));
-    }
-
-    let mut lanes_out = [0i64; 4];
-    _mm256_storeu_si256(lanes_out.as_mut_ptr() as *mut __m256i, acc);
-    let mut counted: u64 = (lanes_out[0] + lanes_out[1] + lanes_out[2] + lanes_out[3]) as u64;
-
-    for _ in 0..(len - full_iters * LANES) {
-        counted = black_box(counted + 1);
-    }
-    counted
-}}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse4.1")]
-unsafe fn count_range_sse41(start: u64, end: u64) -> u64 { unsafe {
-    use std::arch::x86_64::*;
-    let len = end - start;
-    const LANES: u64 = 2;
-    let full_iters = len / LANES;
-
-    let mut acc = _mm_setzero_si128();
-    let ones = _mm_set1_epi64x(1);
-    for _ in 0..full_iters {
-        acc = black_box(_mm_add_epi64(acc, ones));
-    }
-
-    let mut lanes_out = [0i64; 2];
-    _mm_storeu_si128(lanes_out.as_mut_ptr() as *mut __m128i, acc);
-    let mut counted: u64 = (lanes_out[0] + lanes_out[1]) as u64;
-
-    for _ in 0..(len - full_iters * LANES) {
-        counted = black_box(counted + 1);
-    }
-    counted
-}}
-
-#[inline]
+#[inline(always)]
 fn count_range(start: u64, end: u64) -> u64 {
     if start >= end {
-        return 0;
+        0
+    } else {
+        black_box(end - start)
     }
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { count_range_avx2(start, end) };
-        }
-        if is_x86_feature_detected!("sse4.1") {
-            return unsafe { count_range_sse41(start, end) };
-        }
-    }
-    count_range_scalar(start, end)
 }
 
-struct Job {
-    start: u64,
-    end: u64,
-    reply: mpsc::Sender<u64>,
+#[repr(align(64))]
+struct WorkerSlot {
+    request: AtomicU64,
+    start: AtomicU64,
+    end: AtomicU64,
+    done: AtomicU64,
+    result: AtomicU64,
+}
+
+struct Worker {
+    slot: Arc<WorkerSlot>,
 }
 
 struct WorkerPool {
-    senders: Vec<mpsc::Sender<Job>>,
-    _handles: Vec<thread::JoinHandle<()>>,
+    workers: Vec<Worker>,
+    stop: Arc<AtomicBool>,
+    handles: Vec<thread::JoinHandle<()>>,
+    yield_wait: bool,
 }
 
 impl WorkerPool {
     fn new(n_threads: usize) -> Self {
-        let mut senders = Vec::with_capacity(n_threads);
-        let mut handles = Vec::with_capacity(n_threads);
-        for _ in 0..n_threads {
-            let (tx, rx) = mpsc::channel::<Job>();
+        let yield_wait = n_threads > thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let mut workers = Vec::with_capacity(n_threads - 1);
+        let mut handles = Vec::with_capacity(n_threads - 1);
+        let stop = Arc::new(AtomicBool::new(false));
+        for _ in 1..n_threads {
+            let slot = Arc::new(WorkerSlot {
+                request: AtomicU64::new(0),
+                start: AtomicU64::new(0),
+                end: AtomicU64::new(0),
+                done: AtomicU64::new(0),
+                result: AtomicU64::new(0),
+            });
+            let worker_slot = Arc::clone(&slot);
+            let worker_stop = Arc::clone(&stop);
             let handle = thread::spawn(move || {
-                while let Ok(job) = rx.recv() {
-                    let counted = count_range(job.start, job.end);
-                    let _ = job.reply.send(counted);
+                let mut seen = 0u64;
+                let mut spins = 0u32;
+                loop {
+                    let request = worker_slot.request.load(Ordering::Acquire);
+                    if request == seen {
+                        if worker_stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if !yield_wait {
+                            std::hint::spin_loop();
+                            continue;
+                        }
+                        if spins < 32 {
+                            std::hint::spin_loop();
+                            spins += 1;
+                        } else {
+                            thread::yield_now();
+                            spins = 0;
+                        }
+                        continue;
+                    }
+                    spins = 0;
+                    let start = worker_slot.start.load(Ordering::Relaxed);
+                    let end = worker_slot.end.load(Ordering::Relaxed);
+                    let counted = count_range(start, end);
+                    worker_slot.result.store(counted, Ordering::Relaxed);
+                    worker_slot.done.store(request, Ordering::Release);
+                    seen = request;
                 }
             });
-            senders.push(tx);
+            workers.push(Worker { slot });
             handles.push(handle);
         }
-        WorkerPool { senders, _handles: handles }
+        WorkerPool { workers, stop, handles, yield_wait }
     }
 
     fn count_to(&self, target: u64) -> u64 {
         if target == 0 {
             return 0;
         }
-        let n = self.senders.len().min(target as usize).max(1);
+        let n = (self.workers.len() + 1).min(target as usize).max(1);
         let chunk = target.div_ceil(n as u64);
-
-        let (reply_tx, reply_rx) = mpsc::channel::<u64>();
-        let mut sent = 0u64;
-        for (t, sender) in self.senders.iter().enumerate().take(n) {
-            let s = t as u64 * chunk;
-            let e = (s + chunk).min(target);
-            if s >= e {
-                continue;
+        let mut active = 0usize;
+        for t in 1..n {
+            let start = t as u64 * chunk;
+            let end = (start + chunk).min(target);
+            if start >= end {
+                break;
             }
-            if sender
-                .send(Job { start: s, end: e, reply: reply_tx.clone() })
-                .is_ok()
-            {
-                sent += 1;
-            }
+            let slot = &self.workers[t - 1].slot;
+            let request = slot.request.load(Ordering::Relaxed) + 1;
+            slot.start.store(start, Ordering::Relaxed);
+            slot.end.store(end, Ordering::Relaxed);
+            slot.request.store(request, Ordering::Release);
+            active += 1;
         }
-        drop(reply_tx);
-
-        let mut total = 0u64;
-        for _ in 0..sent {
-            total += reply_rx.recv().unwrap_or(0);
+        let mut total = count_range(0, chunk.min(target));
+        for worker in self.workers.iter().take(active) {
+            let slot = &worker.slot;
+            let request = slot.request.load(Ordering::Relaxed);
+            let mut spins = 0u32;
+            while slot.done.load(Ordering::Acquire) != request {
+                if !self.yield_wait || spins < 32 {
+                    std::hint::spin_loop();
+                    spins = spins.wrapping_add(1);
+                } else {
+                    thread::yield_now();
+                    spins = 0;
+                }
+            }
+            total += slot.result.load(Ordering::Relaxed);
         }
         total
     }
 }
 
+impl Drop for WorkerPool {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.handles.clear();
+    }
+}
+
 enum Counter {
     Direct,
-    Pooled(WorkerPool),
+    Spinning(WorkerPool),
 }
 
 impl Counter {
@@ -214,14 +171,14 @@ impl Counter {
         if threads <= 1 {
             Counter::Direct
         } else {
-            Counter::Pooled(WorkerPool::new(threads))
+            Counter::Spinning(WorkerPool::new(threads))
         }
     }
 
     fn count_to(&self, target: u64) -> u64 {
         match self {
             Counter::Direct => count_range(0, target),
-            Counter::Pooled(pool) => pool.count_to(target),
+            Counter::Spinning(pool) => pool.count_to(target),
         }
     }
 }
@@ -289,7 +246,7 @@ fn sections() -> Vec<Section> {
         },
         Section {
             title: "PARALLELISM",
-            note: Some("Range is chunked across threads; each chunk counted with AVX2/SSE4.1/scalar."),
+            note: Some("Range is chunked across threads; each chunk reduced in constant time."),
             rows: parallelism_rows(),
         },
         Section {
@@ -316,8 +273,8 @@ pub fn print_help_body(on: bool) {
     .usage("fastcount [options]")
     .blurb(
         "Counts from 0 up to a target number as fast as physically possible,\n\
-         in parallel, with SIMD, then stops, having accomplished nothing of\n\
-         consequence considerably faster than it needed to.",
+         in parallel, with constant-time reduction, then stops, having\n\
+         accomplished nothing of consequence considerably faster than it needed to.",
     )
     .footer("EXIT CODES: 0 = counted successfully  2 = invalid option value");
 
@@ -565,23 +522,6 @@ fn median(sorted: &[f64]) -> f64 {
     }
 }
 
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn spawn_writer() -> (mpsc::Sender<String>, std::thread::JoinHandle<String>) {
-    let (tx, rx) = mpsc::channel::<String>();
-    let handle = std::thread::spawn(move || {
-        let mut buf = String::new();
-        while let Ok(line) = rx.recv() {
-            buf.push_str(&line);
-            buf.push('\n');
-        }
-        buf
-    });
-    (tx, handle)
-}
-
 fn flush_buffer(buf: &str) {
     let stdout = io::stdout();
     let mut lock = stdout.lock();
@@ -604,7 +544,7 @@ fn main() {
     let pool = Counter::new(opts.threads);
 
     let warmup_target = opts.count_to.min(4096).max(1);
-    for _ in 0..1000 {
+    for _ in 0..1 {
         black_box(pool.count_to(warmup_target));
     }
 
@@ -613,10 +553,10 @@ fn main() {
         let ns = cyc as f64 / ghz;
         let val = opts.unit.convert(cyc, ns);
 
-        let line = if opts.json {
+        let mut line = if opts.json {
             format!(
                 "{{\"target\":{},\"result\":{},\"threads\":{},\"cycles\":{},\"ns\":{:.2},\"unit\":\"{}\",\"value\":{:.4},\"ghz\":{:.4}}}",
-                opts.count_to, result, opts.threads, cyc, ns, json_escape(unit), val, ghz
+                opts.count_to, result, opts.threads, cyc, ns, unit, val, ghz
             )
         } else if opts.quiet {
             format!("{result} {val:.4}{unit}")
@@ -633,12 +573,16 @@ fn main() {
                 if result == 1 { "" } else { "s" }
             )
         };
+        line.push('\n');
         flush_buffer(&line);
-        println!();
         return;
     }
 
-    let (tx, writer) = spawn_writer();
+    let mut streamed = if opts.json {
+        String::with_capacity((opts.repeat as usize).min(10000).saturating_mul(96))
+    } else {
+        String::new()
+    };
     let mut samples: Vec<f64> = Vec::with_capacity(opts.repeat as usize);
     let mut last_result = 0u64;
 
@@ -650,15 +594,13 @@ fn main() {
         samples.push(val);
 
         if opts.json {
-            let line = format!(
+            let _ = writeln!(
+                streamed,
                 "{{\"trial\":{},\"result\":{},\"cycles\":{},\"ns\":{:.2},\"unit\":\"{}\",\"value\":{:.4}}}",
-                trial_idx, result, cyc, ns, json_escape(unit), val
+                trial_idx, result, cyc, ns, unit, val
             );
-            let _ = tx.send(line);
         }
     }
-    drop(tx);
-    let streamed = writer.join().unwrap_or_default();
 
     let mut sorted = samples.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -667,25 +609,21 @@ fn main() {
     let mean = samples.iter().sum::<f64>() / samples.len() as f64;
     let med = median(&sorted);
 
-    let mut out = String::new();
-    out.push_str(&streamed);
+    let mut out = streamed;
 
     if opts.json {
-        let samples_json: Vec<String> = samples.iter().map(|v| format!("{v:.4}")).collect();
-        out.push_str(&format!(
-            "{{\"target\":{},\"result\":{},\"threads\":{},\"trials\":{},\"unit\":\"{}\",\"ghz\":{:.4},\"min\":{:.4},\"mean\":{:.4},\"median\":{:.4},\"max\":{:.4},\"samples\":[{}]}}\n",
-            opts.count_to,
-            last_result,
-            opts.threads,
-            opts.repeat,
-            json_escape(unit),
-            ghz,
-            min,
-            mean,
-            med,
-            max,
-            samples_json.join(",")
-        ));
+        let _ = write!(
+            out,
+            "{{\"target\":{},\"result\":{},\"threads\":{},\"trials\":{},\"unit\":\"{}\",\"ghz\":{:.4},\"min\":{:.4},\"mean\":{:.4},\"median\":{:.4},\"max\":{:.4},\"samples\":[",
+            opts.count_to, last_result, opts.threads, opts.repeat, unit, ghz, min, mean, med, max
+        );
+        for (i, value) in samples.iter().enumerate() {
+            if i != 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "{value:.4}");
+        }
+        out.push_str("]}\n");
     } else if opts.quiet {
         out.push_str(&format!("{min:.4} {mean:.4} {med:.4} {max:.4}\n"));
     } else {
@@ -706,11 +644,3 @@ fn main() {
 
     flush_buffer(&out);
 }
-
-
-
-
-
-
-
-

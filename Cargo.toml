@@ -1,6 +1,6 @@
 [package]
 name = "fastcount"
-version = "0.2.2"
+version = "0.2.3"
 description = "an incredibly fast, incredibly useless counter"
 license = "Apache-2.0"
 repository = "https://github.com/CallMeAlphabet/fastcount"
